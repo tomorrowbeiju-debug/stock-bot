@@ -121,6 +121,9 @@ def analyze_all_stocks(target_open_id: str):
     # 发送汇总消息（使用 Webhook）
     bot.send_via_webhook(summary)
 
+from flask import Response
+import json
+
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
     """飞书事件回调"""
@@ -141,7 +144,11 @@ def webhook():
     # 检查是否是验证请求
     if data.get('type') == 'url_verification':
         challenge = data.get('challenge')
-        return jsonify({'challenge': challenge})
+        response = Response(
+            json.dumps({'challenge': challenge}),
+            mimetype='application/json'
+        )
+        return response
 
     # 检查是否是消息事件
     header = data.get('header', {})
