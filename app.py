@@ -255,7 +255,7 @@ def api_analyze():
     print(f"[API] 分析股票: {stock_code}")
     
     try:
-        # 直接获取实时数据，不使用复杂分析
+        # 获取实时数据
         stock_data = analyzer.get_stock_data(stock_code)
         
         if not stock_data:
@@ -264,16 +264,64 @@ def api_analyze():
                 "error": f"无法获取股票 {stock_code} 的数据"
             }), 404
         
-        # 简单的分析建议
+        # 获取历史数据计算技术指标
+        historical = analyzer.get_historical_data(stock_code, days=60)
+        
+        # 计算均线
+        ma5 = analyzer.calculate_ma(historical, 5)
+        ma10 = analyzer.calculate_ma(historical, 10)
+        ma20 = analyzer.calculate_ma(historical, 20)
+        
+        # 计算 RSI
+        rsi = analyzer.calculate_rsi(historical, 14)
+        
+        # 计算成交量变化
+        volume_change = 0
+        if len(historical) >= 2:
+            avg_volume = sum(h['volume'] for h in historical[1:6]) / 5  # 前5日平均
+            today_volume = historical[0]['volume'] if historical else 0
+            if avg_volume > 0:
+                volume_change = round((today_volume - avg_volume) / avg_volume * 100, 2)
+        
+        # 生成分析建议
         suggestion = "持有"
+        reason_parts = []
+        
+        # 基于涨跌幅
         if stock_data['change_percent'] > 5:
             suggestion = "注意风险"
+            reason_parts.append("涨幅较大，注意回调风险")
         elif stock_data['change_percent'] < -5:
             suggestion = "超跌关注"
+            reason_parts.append("超跌，可能存在反弹机会")
         elif stock_data['change_percent'] > 0:
             suggestion = "看涨"
+            reason_parts.append("小幅上涨")
         else:
             suggestion = "看跌"
+            reason_parts.append("小幅下跌")
+        
+        # 基于均线位置
+        if ma5 > ma20:
+            suggestion = "看涨" if suggestion == "持有" else suggestion
+            reason_parts.append("MA5 > MA20，多头排列")
+        elif ma5 < ma20:
+            suggestion = "看跌" if suggestion == "持有" else suggestion
+            reason_parts.append("MA5 < MA20，空头排列")
+        
+        # 基于 RSI
+        if rsi > 70:
+            suggestion = "注意风险"
+            reason_parts.append(f"RSI={rsi:.0f}，超买区域")
+        elif rsi < 30:
+            suggestion = "超跌关注"
+            reason_parts.append(f"RSI={rsi:.0f}，超卖区域")
+        
+        # 基于量能
+        if volume_change > 30:
+            reason_parts.append(f"成交量放大 {volume_change}%")
+        elif volume_change < -30:
+            reason_parts.append(f"成交量萎缩 {abs(volume_change)}%")
         
         return jsonify({
             "success": True,
@@ -288,8 +336,15 @@ def api_analyze():
                 "high": stock_data.get('high_price', 0),
                 "low": stock_data.get('low_price', 0),
                 "prev_close": stock_data.get('close_price', 0),
+                # 新增技术指标
+                "ma5": round(ma5, 2) if ma5 else 0,
+                "ma10": round(ma10, 2) if ma10 else 0,
+                "ma20": round(ma20, 2) if ma20 else 0,
+                "rsi": round(rsi, 1) if rsi else 50,
+                "volume_change": volume_change,
+                # 建议
                 "suggestion": suggestion,
-                "reason": f"涨跌幅 {stock_data['change_percent']}%",
+                "reason": "；".join(reason_parts),
                 "update_time": stock_data.get('time', '')
             }
         })
