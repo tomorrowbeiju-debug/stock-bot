@@ -213,6 +213,79 @@ def health():
     """健康检查"""
     return jsonify({"status": "ok", "time": datetime.now().isoformat()})
 
+@app.route('/api/analyze', methods=['GET', 'POST'])
+def api_analyze():
+    """
+    股票分析 API 接口
+    用于 OpenClaw 调用获取实时股票数据
+    
+    使用方式:
+    - GET: /api/analyze?code=sz000683
+    - POST: /api/analyze {"code": "sz000683"}
+    
+    返回: JSON 格式的股票分析数据
+    """
+    # 获取股票代码
+    stock_code = None
+    
+    if request.method == 'GET':
+        stock_code = request.args.get('code')
+    else:
+        data = request.get_json()
+        if data:
+            stock_code = data.get('code')
+    
+    if not stock_code:
+        return jsonify({
+            "success": False,
+            "error": "请提供股票代码，如: /api/analyze?code=sz000683"
+        }), 400
+    
+    # 标准化股票代码
+    stock_code = stock_code.strip().lower()
+    if not stock_code.startswith(('sz', 'sh')):
+        # 自动判断市场
+        if stock_code.startswith('0') or stock_code.startswith('3'):
+            stock_code = f"sz{stock_code}"
+        elif stock_code.startswith('6'):
+            stock_code = f"sh{stock_code}"
+        else:
+            stock_code = f"sz{stock_code}"
+    
+    print(f"[API] 分析股票: {stock_code}")
+    
+    # 获取分析数据
+    analysis = analyzer.analyze_stock(stock_code)
+    
+    if not analysis:
+        return jsonify({
+            "success": False,
+            "error": f"无法获取股票 {stock_code} 的数据"
+        }), 404
+    
+    # 返回 JSON 格式的数据
+    stock = analysis['stock_info']
+    rules = analysis['rules']
+    
+    return jsonify({
+        "success": True,
+        "data": {
+            "code": stock['code'],
+            "name": stock['name'],
+            "current_price": stock['current_price'],
+            "change_percent": stock['change_percent'],
+            "volume": stock['volume'],
+            "amount": stock['amount'],
+            "open": stock['open'],
+            "high": stock['high'],
+            "low": stock['low'],
+            "prev_close": stock['prev_close'],
+            "suggestion": rules['suggestion'],
+            "reason": rules['reason'],
+            "update_time": stock.get('update_time', '')
+        }
+    })
+
 def scheduled_morning_analysis():
     """早盘分析任务 (9:00)"""
 
