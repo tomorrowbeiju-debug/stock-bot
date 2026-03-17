@@ -8,15 +8,15 @@ from stock_analyzer import StockAnalyzer
 from feishu_bot import FeishuBot
 
 # 配置信息
-FEISHU_APP_ID = "cli_a93c5e57d338dcbb"
-FEISHU_APP_SECRET = "kymQIWXoPGDUi0xJcOHfig2aAgNODnrk"
+# 飞书群机器人 Webhook（简单方式，不需要企业认证）
+FEISHU_WEBHOOK_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/4da51e25-fafe-4c4c-b337-7792fbeef237"
 DEFAULT_STOCKS = ["sz000683", "sz300498", "sh510720"]
 
 app = Flask(__name__)
 
 # 初始化组件
 analyzer = StockAnalyzer()
-bot = FeishuBot(FEISHU_APP_ID, FEISHU_APP_SECRET)
+bot = FeishuBot(None, None)  # Webhook 方式不需要 app_id 和 secret
 
 # 监控的股票列表
 watched_stocks = DEFAULT_STOCKS.copy()
@@ -77,8 +77,8 @@ def analyze_and_reply(stock_code: str, reply_to_open_id: str, group_open_id: str
     else:
         message = analyzer.format_analysis_message(analysis)
 
-    # 发送消息
-    success = bot.send_message(reply_to_open_id, message)
+    # 发送消息（使用 Webhook）
+    success = bot.send_via_webhook(message)
 
     if success:
         print(f"[{datetime.now()}] 消息发送成功")
@@ -118,20 +118,30 @@ def analyze_all_stocks(target_open_id: str):
 
     summary = "\n".join(summary_lines)
 
-    # 发送汇总消息
-    bot.send_message(target_open_id, summary)
+    # 发送汇总消息（使用 Webhook）
+    bot.send_via_webhook(summary)
 
-@app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
     """飞书事件回调"""
 
+    # GET 请求用于验证
+    if request.method == 'GET':
+        return jsonify({"status": "ok"})
+
+    # 获取请求数据
     data = request.get_json()
+
+    # 如果没有数据，返回空响应
+    if not data:
+        return jsonify({"code": 0})
 
     print(f"[{datetime.now()}] 收到飞书事件: {json.dumps(data, ensure_ascii=False)}")
 
     # 检查是否是验证请求
     if data.get('type') == 'url_verification':
-        return jsonify({'challenge': data.get('challenge')})
+        challenge = data.get('challenge')
+        return jsonify({'challenge': challenge})
 
     # 检查是否是消息事件
     header = data.get('header', {})

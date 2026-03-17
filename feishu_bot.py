@@ -2,8 +2,11 @@ import requests
 import json
 import time
 
+# 群机器人 Webhook URL（简单方式，不需要企业认证）
+WEBHOOK_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/4da51e25-fafe-4c4c-b337-7792fbeef237"
+
 class FeishuBot:
-    """飞书机器人 - 使用 HTTP API"""
+    """飞书机器人 - 支持群机器人 Webhook"""
 
     def __init__(self, app_id: str, app_secret: str):
         self.app_id = app_id
@@ -101,7 +104,7 @@ class FeishuBot:
 
     def send_rich_text_message(self, receive_id: str, title: str, content: str) -> bool:
         """发送富文本消息"""
-        
+
         # 构建富文本内容
         rich_text = {
             "title": title,
@@ -132,4 +135,29 @@ class FeishuBot:
             return True
         else:
             print(f"发送富文本消息失败: {result.get('msg')}")
+            return False
+
+    def send_via_webhook(self, text: str) -> bool:
+        """使用群机器人 Webhook 发送消息（简单方式）"""
+        try:
+            headers = {"Content-Type": "application/json; charset=utf-8"}
+            data = {
+                "msg_type": "text",
+                "content": {
+                    "text": text
+                }
+            }
+
+            response = requests.post(WEBHOOK_URL, headers=headers, json=data, timeout=10)
+            result = response.json()
+
+            if result.get("code") == 0:
+                print("Webhook 消息发送成功")
+                return True
+            else:
+                print(f"Webhook 发送失败: {result.get('msg')}")
+                return False
+
+        except Exception as e:
+            print(f"Webhook 请求异常: {e}")
             return False
