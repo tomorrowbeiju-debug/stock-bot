@@ -1,0 +1,248 @@
+from flask import Flask, request, jsonify
+import json
+import threading
+import time
+from datetime import datetime
+from apscheduler.schedulers.background import BackgroundScheduler
+from stock_analyzer import StockAnalyzer
+from feishu_bot import FeishuBot
+
+# 配置信息
+FEISHU_APP_ID = "cli_a93c5e57d338dcbb"
+FEISHU_APP_SECRET = "kymQIWXoPGDUi0xJcOHfig2aAgNODnrk"
+DEFAULT_STOCKS = ["sz000683", "sz300498", "sh510720"]
+
+app = Flask(__name__)
+
+# 初始化组件
+analyzer = StockAnalyzer()
+bot = FeishuBot(FEISHU_APP_ID, FEISHU_APP_SECRET)
+
+# 监控的股票列表
+watched_stocks = DEFAULT_STOCKS.copy()
+
+# 飞书群 Open ID（需要配置）
+FEISHU_GROUP_OPEN_ID = ""
+
+# 定时任务调度器
+scheduler = BackgroundScheduler()
+
+def is_stock_command(text: str) -> bool:
+    """判断是否是股票分析命令"""
+    stock_keywords = ["分析", "看盘", "股票", "复盘", "持仓", "监控", "代码"]
+
+    text_lower = text.lower()
+    for keyword in stock_keywords:
+        if keyword in text:
+            return True
+
+    return False
+
+def parse_stock_code(text: str) -> str:
+    """从文本中提取股票代码"""
+    # 常见格式: sz000683, sh600000, 000683, 600000
+    import re
+
+    # 匹配 6 位数字
+    match = re.search(r'\d{6}', text)
+    if match:
+        code = match.group()
+
+        # 判断市场
+        if 'sz' in text.lower():
+            return f"sz{code}"
+        elif 'sh' in text.lower():
+            return f"sh{code}"
+        else:
+            # 根据代码前缀判断
+            if code.startswith('0') or code.startswith('3'):
+                return f"sz{code}"
+            elif code.startswith('6'):
+                return f"sh{code}"
+            else:
+                return f"sz{code}"  # 默认深市
+
+    return None
+
+def analyze_and_reply(stock_code: str, reply_to_open_id: str, group_open_id: str = None):
+    """分析股票并回复"""
+
+    print(f"[{datetime.now()}] 开始分析股票: {stock_code}")
+
+    # 分析股票
+    analysis = analyzer.analyze_stock(stock_code)
+
+    if not analysis:
+        message = f"❌ 无法获取股票 {stock_code} 的数据，请检查代码是否正确"
+    else:
+        message = analyzer.format_analysis_message(analysis)
+
+    # 发送消息
+    success = bot.send_message(reply_to_open_id, message)
+
+    if success:
+        print(f"[{datetime.now()}] 消息发送成功")
+    else:
+        print(f"[{datetime.now()}] 消息发送失败")
+
+def analyze_all_stocks(target_open_id: str):
+    """分析所有监控的股票"""
+
+    print(f"[{datetime.now()}] 开始分析所有股票: {watched_stocks}")
+
+    # 生成汇总消息
+    summary_lines = ["📊 **股票监控日报**\n"]
+
+    for stock_code in watched_stocks:
+        analysis = analyzer.analyze_stock(stock_code)
+
+        if analysis:
+            stock = analysis['stock_info']
+            rules = analysis['rules']
+
+            price_color = "🔴" if stock['change_percent'] >= 0 else "🟢"
+
+            line = f"""
+**{stock['name']}** ({stock['code']})
+{price_color} ¥{stock['current_price']} ({stock['change_percent']:+.2f}%)
+建议: {rules['suggestion']}
+"""
+            summary_lines.append(line)
+        else:
+            summary_lines.append(f"\n❌ {stock_code} 数据获取失败")
+
+        # 避免发送太快
+        time.sleep(1)
+
+    summary_lines.append(f"\n🕐 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    summary = "\n".join(summary_lines)
+
+    # 发送汇总消息
+    bot.send_message(target_open_id, summary)
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """飞书事件回调"""
+
+    data = request.get_json()
+
+    print(f"[{datetime.now()}] 收到飞书事件: {json.dumps(data, ensure_ascii=False)}")
+
+    # 检查是否是验证请求
+    if data.get('type') == 'url_verification':
+        return jsonify({'challenge': data.get('challenge')})
+
+    # 检查是否是消息事件
+    header = data.get('header', {})
+    if header.get('event_type') == 'im.message.receive_v1':
+
+        try:
+            # 直接解析 JSON
+            event_data = data.get('event', {})
+
+            # 获取消息内容
+            message = event_data.get('message', {})
+            msg_type = message.get('message_type')
+
+            # 消息类型检查
+            if msg_type != 'text':
+                print(f"忽略非文本消息类型: {msg_type}")
+                return jsonify({"code": 0})
+
+            # 解析消息内容
+            content = json.loads(message.get('content', '{}'))
+            text = content.get('text', '').strip()
+
+            print(f"[{datetime.now()}] 收到消息: {text}")
+
+            # 检查是否是股票命令
+            if not is_stock_command(text):
+                print("不是股票相关命令，忽略")
+                return jsonify({"code": 0})
+
+            # 获取发送者 ID
+            sender = event_data.get('sender', {})
+            sender_id = sender.get('sender_id', {})
+            reply_to = sender_id.get('open_id')
+
+            if not reply_to:
+                print("无法获取发送者 ID")
+                return jsonify({"code": 0})
+
+            # 提取股票代码
+            stock_code = parse_stock_code(text)
+
+            if stock_code:
+                # 分析指定股票
+                threading.Thread(
+                    target=analyze_and_reply,
+                    args=(stock_code, reply_to)
+                ).start()
+            else:
+                # 分析所有股票
+                threading.Thread(
+                    target=analyze_all_stocks,
+                    args=(reply_to,)
+                ).start()
+
+        except Exception as e:
+            print(f"处理消息异常: {e}")
+
+    return jsonify({"code": 0})
+
+@app.route('/health', methods=['GET'])
+def health():
+    """健康检查"""
+    return jsonify({"status": "ok", "time": datetime.now().isoformat()})
+
+def scheduled_morning_analysis():
+    """早盘分析任务 (9:00)"""
+
+    print(f"[{datetime.now()}] 执行早盘分析任务")
+
+    if FEISHU_GROUP_OPEN_ID:
+        analyze_all_stocks(FEISHU_GROUP_OPEN_ID)
+
+def scheduled_evening_analysis():
+    """收盘分析任务 (15:05)"""
+
+    print(f"[{datetime.now()}] 执行收盘分析任务")
+
+    if FEISHU_GROUP_OPEN_ID:
+        analyze_all_stocks(FEISHU_GROUP_OPEN_ID)
+
+def start_scheduler():
+    """启动定时任务"""
+
+    # 早盘分析: 每天 9:00
+    scheduler.add_job(
+        scheduled_morning_analysis,
+        'cron',
+        hour=9,
+        minute=0,
+        id='morning_analysis'
+    )
+
+    # 收盘分析: 每天 15:05
+    scheduler.add_job(
+        scheduled_evening_analysis,
+        'cron',
+        hour=15,
+        minute=5,
+        id='evening_analysis'
+    )
+
+    scheduler.start()
+    print("定时任务已启动")
+
+if __name__ == '__main__':
+    # 启动定时任务
+    start_scheduler()
+
+    # 启动 Flask 服务
+    print(f"股票助手服务启动中...")
+    print(f"默认监控股票: {watched_stocks}")
+    print(f"服务地址: http://0.0.0.0:5000")
+
+    app.run(host='0.0.0.0', port=5000)
