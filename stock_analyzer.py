@@ -209,7 +209,7 @@ class StockAnalyzer:
         # 第三层: 量能判断
         volume_strength = "平量"
         if len(historical) >= 5:
-            avg_volume = sum(h[:5]['volume'] for h in historical[:5]) / 5
+            avg_volume = sum(h['volume'] for h in historical[:5]) / 5
             if stock['volume'] > avg_volume * 1.5:
                 volume_strength = "放量"
             elif stock['volume'] < avg_volume * 0.7:
