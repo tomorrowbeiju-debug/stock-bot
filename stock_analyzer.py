@@ -23,7 +23,12 @@ class StockAnalyzer:
             data = response.text
             if not data or '~' not in data:
                 return None
-
+            
+            # 腾讯接口返回格式: v_sz000683="51~博源化工~..."
+            # 需要去掉前缀
+            if '=' in data:
+                data = data.split('=')[1].strip('"')
+            
             # 解析腾讯接口返回数据
             parts = data.split('~')
 

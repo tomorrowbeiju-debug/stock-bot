@@ -254,18 +254,54 @@ def api_analyze():
     
     print(f"[API] 分析股票: {stock_code}")
     
-    # 获取分析数据
-    analysis = analyzer.analyze_stock(stock_code)
-    
-    if not analysis:
+    try:
+        # 直接获取实时数据，不使用复杂分析
+        stock_data = analyzer.get_stock_data(stock_code)
+        
+        if not stock_data:
+            return jsonify({
+                "success": False,
+                "error": f"无法获取股票 {stock_code} 的数据"
+            }), 404
+        
+        # 简单的分析建议
+        suggestion = "持有"
+        if stock_data['change_percent'] > 5:
+            suggestion = "注意风险"
+        elif stock_data['change_percent'] < -5:
+            suggestion = "超跌关注"
+        elif stock_data['change_percent'] > 0:
+            suggestion = "看涨"
+        else:
+            suggestion = "看跌"
+        
+        return jsonify({
+            "success": True,
+            "data": {
+                "code": stock_data['code'],
+                "name": stock_data['name'],
+                "current_price": stock_data['current_price'],
+                "change_percent": stock_data['change_percent'],
+                "volume": stock_data['volume'],
+                "amount": stock_data['amount'],
+                "open": stock_data.get('open_price', 0),
+                "high": stock_data.get('high_price', 0),
+                "low": stock_data.get('low_price', 0),
+                "prev_close": stock_data.get('close_price', 0),
+                "suggestion": suggestion,
+                "reason": f"涨跌幅 {stock_data['change_percent']}%",
+                "update_time": stock_data.get('time', '')
+            }
+        })
+        
+    except Exception as e:
+        import traceback
+        print(f"[API] 分析错误: {e}")
+        print(f"[API] 堆栈: {traceback.format_exc()}")
         return jsonify({
             "success": False,
-            "error": f"无法获取股票 {stock_code} 的数据"
-        }), 404
-    
-    # 返回 JSON 格式的数据
-    stock = analysis['stock_info']
-    rules = analysis['rules']
+            "error": f"分析股票时出错: {str(e)}"
+        }), 500
     
     return jsonify({
         "success": True,
@@ -276,13 +312,13 @@ def api_analyze():
             "change_percent": stock['change_percent'],
             "volume": stock['volume'],
             "amount": stock['amount'],
-            "open": stock['open'],
-            "high": stock['high'],
-            "low": stock['low'],
-            "prev_close": stock['prev_close'],
+            "open": stock.get('open_price', 0),
+            "high": stock.get('high_price', 0),
+            "low": stock.get('low_price', 0),
+            "prev_close": stock.get('close_price', 0),
             "suggestion": rules['suggestion'],
             "reason": rules['reason'],
-            "update_time": stock.get('update_time', '')
+            "update_time": stock.get('time', '')
         }
     })
 
